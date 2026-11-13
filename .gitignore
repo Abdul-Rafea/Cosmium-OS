@@ -1,0 +1,5 @@
+#ignore Folders
+vscode/
+
+# Ignore Files
+*.exe
