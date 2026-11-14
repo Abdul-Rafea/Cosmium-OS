@@ -3,9 +3,6 @@
 
 #include "direct-2D.h"
 
-// Global transparency value (0 = invisible, 255 = solid)
-BYTE g_alpha = 200;
-
 // Function Prototypes
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
@@ -55,20 +52,35 @@ bool IsPointInRect(float px, float py, const D2D1_RECT_F& r) {
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
-        case WM_CREATE:
+        case WM_CREATE: {
             // Apply initial transparency when the window is created
-            SetLayeredWindowAttributes(hwnd, 0, g_alpha, LWA_ALPHA);
+            SetLayeredWindowAttributes(hwnd, 0, 200, LWA_ALPHA);
 
             // Initialize Direct2D
             InitializeDirect2D(hwnd);
 
-            // Load SVGs
+            // Load Svgs
             LoadSvgFile(L"x.svg", g_svgX.svg);
             g_svgX.onClick = [hwnd] {
                 PostMessageW(hwnd, WM_CLOSE, 0, 0);
             };
+            
+            LoadSvgFile(L"battery-unplugged.svg", g_svgBatteryUnplugged);
+            LoadSvgFile(L"battery-plugged.svg", g_svgBatteryPlugged);
+
+            // Check initial power state on boot
+            SYSTEM_POWER_STATUS status;
+            if (GetSystemPowerStatus(&status)) {
+                g_batteryPercent = (status.BatteryLifePercent == 255) ? 0 : status.BatteryLifePercent;
+                g_isPluggedIn = (status.ACLineStatus == 1);
+            }
+            
+            // Timer
+            SetTimer(hwnd, 1, 5000, nullptr);
 
             return 0;
+        }
+
         case WM_PAINT: {
             PAINTSTRUCT ps;
             BeginPaint(hwnd, &ps);
@@ -78,6 +90,37 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
             EndPaint(hwnd, &ps);
             return 0;
+        }
+
+        case WM_TIMER: {
+            if (wParam == 1) {
+                SYSTEM_POWER_STATUS status;
+                if (GetSystemPowerStatus(&status)) {
+                    int currentPercent = (status.BatteryLifePercent == 255) ? 0 : status.BatteryLifePercent;
+                    bool currentPluggedIn = (status.ACLineStatus == 1);
+
+                    // If percentage or power source changed, update globals and redraw
+                    if (currentPercent != g_batteryPercent || currentPluggedIn != g_isPluggedIn) {
+                        g_batteryPercent = currentPercent;
+                        g_isPluggedIn = currentPluggedIn;
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    }
+                }
+            }
+            return 0;
+        }
+
+        case WM_POWERBROADCAST: {
+            // Check if the power status has changed
+            if (wParam == PBT_APMPOWERSTATUSCHANGE) {
+                SYSTEM_POWER_STATUS status;
+                if (GetSystemPowerStatus(&status)) {
+                    g_batteryPercent = (status.BatteryLifePercent == 255) ? 0 : status.BatteryLifePercent;
+                    g_isPluggedIn = (status.ACLineStatus == 1);
+                    InvalidateRect(hwnd, nullptr, FALSE); // Trigger redraw
+                }
+            }
+            return TRUE;
         }
 
         case WM_SIZE: {
@@ -127,6 +170,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         }
 
         case WM_DESTROY:
+            KillTimer(hwnd, 1);
             PostQuitMessage(0);
             return 0;
 
