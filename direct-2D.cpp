@@ -120,55 +120,39 @@ HRESULT LoadSvgFile(const wchar_t* filename, Microsoft::WRL::ComPtr<ID2D1SvgDocu
     return hr;
 }
 
-void Render(HWND hwnd) {
+void render(HWND hwnd) {
+    // Checking direct 2D context
     if (!g_d2dContext) return;
 
-    // Get current window dimensions
-    RECT window;
-    GetClientRect(hwnd, &window);
-    float windowWidth = static_cast<float>(window.right - window.left);
+    // Geting current window dimensions
+    float windowWidth = getWindowWidth(hwnd);
+    float windowHeight = getWindowHeight(hwnd);
 
+    // Start drawing and clear drawing frame
     g_d2dContext->BeginDraw();
-    g_d2dContext->Clear(D2D1::ColorF(0.08f, 0.09f, 0.11f, 1.0f)); // clear drawing frame
+    g_d2dContext->Clear(D2D1::ColorF(0.08f, 0.09f, 0.11f, 1.0f));
 
-    // X Svg
-    if (g_svgX.svg) {
-        SvgLayout svg = calcSvgLayout(50.0f, windowWidth, 0.0f, 0.0f, L"TOP_RIGHT");
-        
-        // Hover Properties
-        g_svgX.bounds = D2D1::RectF(svg.x, svg.y, svg.x + svg.desiredSize, svg.y + svg.desiredSize);
-        if (g_svgX.isHovered) {
-            Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> hoverBrush;
-            g_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f), &hoverBrush);
-            g_d2dContext->FillRoundedRectangle(D2D1::RoundedRect(g_svgX.bounds, 6.0f, 6.0f), hoverBrush.Get());
-        }
-
-        transformSpaceForSvg(g_svgX.svg.Get(), svg);
-    }
-
-    // Battery Svg And Text
+    // Svgs
     ID2D1SvgDocument* batterySvg = g_isPluggedIn ? g_svgBatteryPlugged.Get() : g_svgBatteryUnplugged.Get();
 
     if (batterySvg) {
-        // Battery Svg
         SvgLayout svg = calcSvgLayout(50.0f, windowWidth, 10.0f, 0.0f, L"TOP_LEFT");
         transformSpaceForSvg(batterySvg, svg);
 
-        // Battery Text
+        // Battery text bpunds
         float textX = svg.x + svg.desiredSize + 5.0f;
         float textY = svg.y + 8.0f; // Vertically centered
         
         // D2D1_RECT_F textRect = D2D1::RectF(textX, textY, textX + 100.0f, textY + 24.0f);
 
-        // Create a white brush for the text
+        // Createing brush for the text
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> textBrush;
         g_d2dContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &textBrush);
 
         std::wstring batteryText = std::to_wstring(g_batteryPercent) + L"%";
 
-        // 1. Create a layout based on your existing text format
+        // Creating a layout
         Microsoft::WRL::ComPtr<IDWriteTextLayout> textLayout;
-
         g_dWriteFactory->CreateTextLayout(
             batteryText.c_str(),
             static_cast<UINT32>(batteryText.length()),
@@ -178,11 +162,11 @@ void Render(HWND hwnd) {
             &textLayout
         );
 
-        // 2. Target the exact range and override the font size dynamically
+        // Targeting the exact range and overriding the font size dynamically
         DWRITE_TEXT_RANGE range = { 0, static_cast<UINT32>(batteryText.length()) };
         textLayout->SetFontSize(24.0f, range); // <--- Changes font size for this layout instantly
 
-        // 3. Draw the layout in your Render() function
+        // 3. Drawing the layout
         g_d2dContext->DrawTextLayout(
             D2D1::Point2F(textX, textY),
             textLayout.Get(),
@@ -190,6 +174,11 @@ void Render(HWND hwnd) {
         );
     }
 
+    // Terminal
+    renderTerminal(hwnd, windowWidth, windowHeight);   
+
+    // TO BE REVIEWED
+    // Ending drawing
     g_d2dContext->EndDraw();
     g_swapChain->Present(1, 0);
 }

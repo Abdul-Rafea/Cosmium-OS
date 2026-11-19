@@ -10,6 +10,9 @@
 #include <string>
 #include <functional>
 
+#include "util/util.h"
+#include "terminal/terminal.h"
+
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -40,8 +43,7 @@ inline Microsoft::WRL::ComPtr<IDXGISwapChain1> g_swapChain;
 inline Microsoft::WRL::ComPtr<IDWriteFactory> g_dWriteFactory;
 inline Microsoft::WRL::ComPtr<IDWriteTextFormat> g_textFormat;
 
-// Global SVG Variables
-inline ButtonSvg g_svgX;
+// Global Direct 2D Componnet Variables 
 inline Microsoft::WRL::ComPtr<ID2D1SvgDocument> g_svgBatteryUnplugged;
 inline Microsoft::WRL::ComPtr<ID2D1SvgDocument> g_svgBatteryPlugged;
 inline bool g_isPluggedIn = false;
@@ -50,4 +52,4 @@ inline int g_batteryPercent = 100;
 // Functions
 HRESULT InitializeDirect2D(HWND hwnd);
 HRESULT LoadSvgFile(const wchar_t* filename, Microsoft::WRL::ComPtr<ID2D1SvgDocument>& outSvgDoc);
-void Render(HWND hwnd);
+void render(HWND hwnd);

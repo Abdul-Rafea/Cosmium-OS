@@ -2,9 +2,14 @@
 #include <windowsx.h>
 
 #include "direct-2D.h"
+#include "terminal/terminal.h"
 
 // Function Prototypes
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+bool IsPointInRect(float px, float py, const D2D1_RECT_F& r);
+void ExecuteCommand(HWND hwnd, const std::wstring& cmd);
+void SendCommandToSubprocess(const std::wstring& cmd);
+void StopSubprocessTerminal();
 
 // Main Function
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
@@ -45,35 +50,28 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 }
 
 // Function Definitions
-
-bool IsPointInRect(float px, float py, const D2D1_RECT_F& r) {
-    return (px >= r.left && px <= r.right && py >= r.top && py <= r.bottom);
-}
-
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE: {
-            // Apply initial transparency when the window is created
+            // Applying transparency
             SetLayeredWindowAttributes(hwnd, 0, 200, LWA_ALPHA);
 
-            // Initialize Direct2D
+            // Initializing direct2D
             InitializeDirect2D(hwnd);
 
-            // Load Svgs
-            LoadSvgFile(L"x.svg", g_svgX.svg);
-            g_svgX.onClick = [hwnd] {
-                PostMessageW(hwnd, WM_CLOSE, 0, 0);
-            };
-            
+            // Loading svgs
             LoadSvgFile(L"battery-unplugged.svg", g_svgBatteryUnplugged);
             LoadSvgFile(L"battery-plugged.svg", g_svgBatteryPlugged);
 
-            // Check initial power state on boot
+            // Checking initial power state on boot
             SYSTEM_POWER_STATUS status;
             if (GetSystemPowerStatus(&status)) {
                 g_batteryPercent = (status.BatteryLifePercent == 255) ? 0 : status.BatteryLifePercent;
                 g_isPluggedIn = (status.ACLineStatus == 1);
             }
+
+            // Intializing terminal
+            initializeTerminal(hwnd);
             
             // Timer
             SetTimer(hwnd, 1, 5000, nullptr);
@@ -85,8 +83,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             PAINTSTRUCT ps;
             BeginPaint(hwnd, &ps);
 
-            // Execute our Direct2D render pipeline (Draws SVGs)
-            Render(hwnd);
+            // Executing direct2D render pipelines
+            render(hwnd);
 
             EndPaint(hwnd, &ps);
             return 0;
@@ -147,15 +145,55 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
 
+        case WM_CHAR: {
+            wchar_t ch = static_cast<wchar_t>(wParam);
+
+            if (ch == L'\r') { // Enter key
+                SendCommandToSubprocess(g_terminal.currentInput);
+                g_terminal.currentInput.clear();
+            } else if (ch == L'\b') { // Backspace
+                if (!g_terminal.currentInput.empty()) {
+                    g_terminal.currentInput.pop_back();
+                }
+            } else if (ch >= 32) {
+                g_terminal.currentInput += ch;
+            }
+
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+
+        case WM_MOUSEWHEEL: {
+            int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+            // Scroll down to reveal newer lines; scroll up to return to the beginning.
+            g_terminal.scrollOffset += (delta > 0) ? -30.0f : 30.0f;
+
+            // Clamp scroll so you don't scroll past the bottom or past the top
+            float boxHeight = g_terminal.bounds.bottom - g_terminal.bounds.top;
+            std::size_t historySize;
+            {
+                std::lock_guard<std::mutex> lock(g_terminal.historyMutex);
+                historySize = g_terminal.history.size();
+            }
+            float totalContentHeight = (historySize + 1) * g_terminal.lineHeight;
+            float maxScroll = (totalContentHeight > boxHeight) ? (totalContentHeight - boxHeight + 20.0f) : 0.0f;
+
+            if (g_terminal.scrollOffset < 0.0f) g_terminal.scrollOffset = 0.0f;
+            if (g_terminal.scrollOffset > maxScroll) g_terminal.scrollOffset = maxScroll;
+
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+
+        case WM_APP + 1: {
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+
         case WM_MOUSEMOVE: {
             float mouseX = static_cast<float>(GET_X_LPARAM(lParam));
             float mouseY = static_cast<float>(GET_Y_LPARAM(lParam));
 
-            bool hovered = IsPointInRect(mouseX, mouseY, g_svgX.bounds);
-            if (hovered != g_svgX.isHovered) {
-                g_svgX.isHovered = hovered;
-                InvalidateRect(hwnd, nullptr, FALSE); // trigger redraw for hover state
-            }
             return 0;
         }
 
@@ -163,18 +201,64 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             float mouseX = static_cast<float>(GET_X_LPARAM(lParam));
             float mouseY = static_cast<float>(GET_Y_LPARAM(lParam));
 
-            if (IsPointInRect(mouseX, mouseY, g_svgX.bounds) && g_svgX.onClick) {
-                g_svgX.onClick();
-            }
             return 0;
         }
 
         case WM_DESTROY:
             KillTimer(hwnd, 1);
+            stopTerminal();
             PostQuitMessage(0);
             return 0;
 
         default:
             return DefWindowProcW(hwnd, uMsg, wParam, lParam);
     }
+}
+
+bool IsPointInRect(float px, float py, const D2D1_RECT_F& r) {
+    return (px >= r.left && px <= r.right && py >= r.top && py <= r.bottom);
+}
+
+void ExecuteCommand(HWND hwnd, const std::wstring& cmd) {
+    // Save the typed command to history
+    g_terminal.history.push_back(L"> " + cmd);
+
+    if (cmd == L"help") {
+        g_terminal.history.push_back(L"Available commands: help, clear, battery, exit");
+    } else if (cmd == L"clear") {
+        g_terminal.history.clear();
+    } else if (cmd == L"battery") {
+        g_terminal.history.push_back(L"Battery: " + std::to_wstring(g_batteryPercent) + L"% " + (g_isPluggedIn ? L"(Plugged In)" : L"(On Battery)"));
+    } else if (cmd == L"exit") {
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    } else if (!cmd.empty()) {
+        g_terminal.history.push_back(L"Unknown command: " + cmd);
+    }
+
+    // Auto-scroll back to the bottom whenever a new command runs
+    g_terminal.scrollOffset = 0.0f;
+}
+
+void SendCommandToSubprocess(const std::wstring& cmd) {
+    // Echo command locally in history box
+    {
+        std::lock_guard<std::mutex> lock(g_terminal.historyMutex);
+        g_terminal.history.push_back(L"> " + cmd);
+    }
+
+    // Append newline so cmd.exe executes it
+    std::wstring fullCmd = cmd + L"\r\n";
+    int narrowLength = WideCharToMultiByte(CP_ACP, 0, fullCmd.c_str(), static_cast<int>(fullCmd.size()),
+        nullptr, 0, nullptr, nullptr);
+    std::string narrowCmd(static_cast<size_t>(narrowLength), '\0');
+    WideCharToMultiByte(CP_ACP, 0, fullCmd.c_str(), static_cast<int>(fullCmd.size()),
+        narrowCmd.data(), narrowLength, nullptr, nullptr);
+
+    DWORD written;
+    if (!WriteFile(g_terminal.hChildStdinWrite, narrowCmd.data(), static_cast<DWORD>(narrowCmd.size()), &written, nullptr)) {
+        std::lock_guard<std::mutex> lock(g_terminal.historyMutex);
+        g_terminal.history.push_back(L"Failed to send command to cmd.exe.");
+    }
+    
+    g_terminal.scrollOffset = 0.0f;
 }
