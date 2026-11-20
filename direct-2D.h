@@ -9,6 +9,7 @@
 #include <shlwapi.h>
 #include <string>
 #include <functional>
+#include <wincodec.h>
 
 #include "util/util.h"
 #include "terminal/terminal.h"
@@ -18,20 +19,21 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 // Structs
-struct SvgLayout {
-    float desiredSize = 0.0f;
-    float scale = 0.0f;
-    float x = 0.90f;
-    float y = 0.0f;
+struct Png {
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> png; 
+    D2D1_RECT_F rect;
+    float opacity = 1.0f;
 };
 
-struct ButtonSvg {
-    Microsoft::WRL::ComPtr<ID2D1SvgDocument> svg;
-    D2D1_RECT_F bounds = {};   // left, top, right, bottom
-    bool isHovered = false;
-    std::function<void()> onClick;
+struct Text {
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    D2D1_POINT_2F origin;
+    std::wstring text;
+    float fontSize;
 };
 
 // Global Direct2D / DXGI Interfaces
@@ -39,17 +41,35 @@ inline Microsoft::WRL::ComPtr<ID2D1Factory6> g_d2dFactory;
 inline Microsoft::WRL::ComPtr<ID2D1Device5> g_d2dDevice;
 inline Microsoft::WRL::ComPtr<ID2D1DeviceContext5> g_d2dContext;
 inline Microsoft::WRL::ComPtr<IDXGISwapChain1> g_swapChain;
-
 inline Microsoft::WRL::ComPtr<IDWriteFactory> g_dWriteFactory;
 inline Microsoft::WRL::ComPtr<IDWriteTextFormat> g_textFormat;
+inline Microsoft::WRL::ComPtr<IWICImagingFactory> g_wicFactory;
 
-// Global Direct 2D Componnet Variables 
+// Global Brushes
+inline Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> g_whiteBrush;
+
+// Global Direct 2D Componnets
 inline Microsoft::WRL::ComPtr<ID2D1SvgDocument> g_svgBatteryUnplugged;
 inline Microsoft::WRL::ComPtr<ID2D1SvgDocument> g_svgBatteryPlugged;
 inline bool g_isPluggedIn = false;
 inline int g_batteryPercent = 100;
 
+inline Png g_logo;
+inline Text g_loadingHeading;
+
 // Functions
-HRESULT InitializeDirect2D(HWND hwnd);
-HRESULT LoadSvgFile(const wchar_t* filename, Microsoft::WRL::ComPtr<ID2D1SvgDocument>& outSvgDoc);
+HRESULT initializeDirect2D(HWND hwnd);
+HRESULT loadSvgFile(const wchar_t* filename, Microsoft::WRL::ComPtr<ID2D1SvgDocument>& outSvgDoc);
+HRESULT loadPngFile(const wchar_t* filename, Microsoft::WRL::ComPtr<ID2D1Bitmap1>& outBitmap);
+HRESULT configureText(
+    Text& component,
+    const std::wstring& string,
+    float fontSize,
+    D2D1_POINT_2F origin,
+    float maxWidth,
+    float maxHeight,
+    std::wstring color
+);
+void renderPng();
+void renderText(Text& text);
 void render(HWND hwnd);

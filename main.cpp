@@ -3,6 +3,7 @@
 
 #include "direct-2D.h"
 #include "terminal/terminal.h"
+#include "util/util.h"
 
 // Function Prototypes
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -13,20 +14,25 @@ void StopSubprocessTerminal();
 
 // Main Function
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+    HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(comResult) && comResult != RPC_E_CHANGED_MODE) {
+        return 0;
+    }
+
     const wchar_t CLASS_NAME[] = L"TransparentShellClass";
 
-    WNDCLASSW wc = {};
+    WNDCLASSW wc = {0};
     wc.lpfnWndProc   = WindowProc;
     wc.hInstance     = hInstance;
     wc.lpszClassName = CLASS_NAME;
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = nullptr;
 
     RegisterClassW(&wc);
 
     // CRITICAL: WS_EX_LAYERED must be the first parameter in CreateWindowExW
     HWND hwnd = CreateWindowExW(
-        WS_EX_LAYERED,                      // Enables layered window attributes
+        0,                      // Enables layered window attributes
         CLASS_NAME,
         L"Transparent Window - Use Up/Down Arrows to adjust alpha",
         WS_POPUP | WS_VISIBLE,
@@ -46,6 +52,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         DispatchMessageW(&msg);
     }
 
+    if (SUCCEEDED(comResult)) {
+        CoUninitialize();
+    }
+
     return (int)msg.wParam;
 }
 
@@ -53,28 +63,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE: {
-            // Applying transparency
-            SetLayeredWindowAttributes(hwnd, 0, 200, LWA_ALPHA);
-
             // Initializing direct2D
-            InitializeDirect2D(hwnd);
+            initializeDirect2D(hwnd);
+            initializeTerminal(hwnd);
 
             // Loading svgs
-            LoadSvgFile(L"battery-unplugged.svg", g_svgBatteryUnplugged);
-            LoadSvgFile(L"battery-plugged.svg", g_svgBatteryPlugged);
+            loadSvgFile(L"battery-unplugged.svg", g_svgBatteryUnplugged);
+            loadSvgFile(L"battery-plugged.svg", g_svgBatteryPlugged);
 
-            // Checking initial power state on boot
-            SYSTEM_POWER_STATUS status;
-            if (GetSystemPowerStatus(&status)) {
-                g_batteryPercent = (status.BatteryLifePercent == 255) ? 0 : status.BatteryLifePercent;
-                g_isPluggedIn = (status.ACLineStatus == 1);
-            }
-
-            // Intializing terminal
-            initializeTerminal(hwnd);
-            
-            // Timer
-            SetTimer(hwnd, 1, 5000, nullptr);
+            // Loading pngs
+            loadPngFile(L"assets/CosmiumOS-Logo.png", g_logo.png);
 
             return 0;
         }
@@ -83,8 +81,45 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             PAINTSTRUCT ps;
             BeginPaint(hwnd, &ps);
 
-            // Executing direct2D render pipelines
-            render(hwnd);
+            // Checking direct 2D context
+            if (!g_d2dContext) {
+                EndPaint(hwnd, &ps);
+                return static_cast<LRESULT>(0);
+            }
+
+            // Getting Window Bounds
+            float windowWidth = getWindowWidth(hwnd);
+
+            // Calculating direct2D components
+            g_logo.rect = D2D1::RectF(
+                (windowWidth / 2.0f) - 150.0f,
+                20.0f,
+                (windowWidth / 2.0f) + 150.0f,
+                320.0f
+            );
+
+            configureText(
+                g_loadingHeading,
+                L"Loading...",
+                30.0f,
+                D2D1::Point2F(0.0f, 350.0f),
+                windowWidth,
+                60.0f,
+                L"white"
+            );
+            g_loadingHeading.layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            
+            // Starting drawing and clearing frame
+            g_d2dContext->BeginDraw();
+            g_d2dContext->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f));
+
+            renderPng();
+            renderText(g_loadingHeading);
+            // renderTerminal(hwnd);
+
+            // Ending drawing
+            g_d2dContext->EndDraw();
+            g_swapChain->Present(1, 0);
 
             EndPaint(hwnd, &ps);
             return 0;
@@ -213,6 +248,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         default:
             return DefWindowProcW(hwnd, uMsg, wParam, lParam);
     }
+
+    return 0;
 }
 
 bool IsPointInRect(float px, float py, const D2D1_RECT_F& r) {

@@ -33,5 +33,5 @@ inline Terminal g_terminal;
 
 // Functions
 void initializeTerminal(HWND hwnd);
-void renderTerminal(HWND hwnd, float windowWidth, float windowHeight);
+void renderTerminal(HWND hwnd);
 void stopTerminal();

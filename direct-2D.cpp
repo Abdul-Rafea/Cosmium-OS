@@ -1,47 +1,15 @@
 #include "direct-2D.h"
 
-using Microsoft::WRL::ComPtr;
-
-// Helper Functions
-SvgLayout calcSvgLayout(float desiredSize, float windowWidth, float paddingX, float paddingY, std::wstring position) {
-    SvgLayout svg;
-    svg.desiredSize = desiredSize;
-    svg.scale = desiredSize / 24;
-
-    if(position == L"TOP_RIGHT") {
-        svg.x = windowWidth - desiredSize - paddingX;
-        svg.y = paddingY;
-    }
-    else if (position == L"TOP_LEFT") {
-        svg.x = paddingX;
-        svg.y = paddingY;
-    }
-
-    return svg;
-}
-
-void transformSpaceForSvg(ID2D1SvgDocument* svgDoc, const SvgLayout& layout) {
-    if (!svgDoc || !g_d2dContext) return;
-
-    D2D1::Matrix3x2F transform = 
-        D2D1::Matrix3x2F::Scale(layout.scale, layout.scale) * 
-        D2D1::Matrix3x2F::Translation(layout.x, layout.y);
-
-    g_d2dContext->SetTransform(transform);
-    g_d2dContext->DrawSvgDocument(svgDoc);
-    g_d2dContext->SetTransform(D2D1::Matrix3x2F::Identity());
-}
-
 // Functions
-HRESULT InitializeDirect2D(HWND hwnd) {
+HRESULT initializeDirect2D(HWND hwnd) {
     // Create Direct3D 11 Device
     UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-    ComPtr<ID3D11Device> d3dDevice;
+    Microsoft::WRL::ComPtr<ID3D11Device> d3dDevice;
     HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, creationFlags,
         nullptr, 0, D3D11_SDK_VERSION, &d3dDevice, nullptr, nullptr);
     if (FAILED(hr)) return hr;
 
-    ComPtr<IDXGIDevice> dxgiDevice;
+    Microsoft::WRL::ComPtr<IDXGIDevice> dxgiDevice;
     hr = d3dDevice.As(&dxgiDevice);
     if (FAILED(hr)) return hr;
 
@@ -56,11 +24,11 @@ HRESULT InitializeDirect2D(HWND hwnd) {
     if (FAILED(hr)) return hr;
 
     // Create SwapChain for the HWND
-    ComPtr<IDXGIAdapter> dxgiAdapter;
+    Microsoft::WRL::ComPtr<IDXGIAdapter> dxgiAdapter;
     hr = dxgiDevice->GetAdapter(&dxgiAdapter);
     if (FAILED(hr)) return hr;
 
-    ComPtr<IDXGIFactory2> dxgiFactory;
+    Microsoft::WRL::ComPtr<IDXGIFactory2> dxgiFactory;
     hr = dxgiAdapter->GetParent(IID_PPV_ARGS(&dxgiFactory));
     if (FAILED(hr)) return hr;
 
@@ -75,7 +43,7 @@ HRESULT InitializeDirect2D(HWND hwnd) {
     if (FAILED(hr)) return hr;
 
     // Bind SwapChain Backbuffer to Direct2D Render Target
-    ComPtr<IDXGISurface> backBuffer;
+    Microsoft::WRL::ComPtr<IDXGISurface> backBuffer;
     hr = g_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
     if (FAILED(hr)) return hr;
 
@@ -83,7 +51,7 @@ HRESULT InitializeDirect2D(HWND hwnd) {
         D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
     );
-    ComPtr<ID2D1Bitmap1> targetBitmap;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> targetBitmap;
     hr = g_d2dContext->CreateBitmapFromDxgiSurface(backBuffer.Get(), &bp, &targetBitmap);
     if (FAILED(hr)) return hr;
 
@@ -94,7 +62,7 @@ HRESULT InitializeDirect2D(HWND hwnd) {
     if (FAILED(hr)) return hr;
 
     hr = g_dWriteFactory->CreateTextFormat(
-        L"Segoe UI",                  // Font family name (or any custom font installed on Windows)
+        L"Consolas",                  // Font family name (or any custom font installed on Windows)
         nullptr,                      // Font collection (nullptr = system fonts)
         DWRITE_FONT_WEIGHT_SEMI_BOLD,  // Weight
         DWRITE_FONT_STYLE_NORMAL,     // Style
@@ -105,10 +73,23 @@ HRESULT InitializeDirect2D(HWND hwnd) {
     );
     if (FAILED(hr)) return hr;
 
+    // Initializing WIC factory
+    hr = CoCreateInstance(
+        CLSID_WICImagingFactory,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&g_wicFactory)
+    );
+    if (FAILED(hr)) return hr;
+
+    // Creating brushes
+    hr = g_d2dContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &g_whiteBrush);
+    if (FAILED(hr)) return hr;
+
     return S_OK;
 }
 
-HRESULT LoadSvgFile(const wchar_t* filename, Microsoft::WRL::ComPtr<ID2D1SvgDocument>& outSvgDoc) {
+HRESULT loadSvgFile(const wchar_t* filename, Microsoft::WRL::ComPtr<ID2D1SvgDocument>& outSvgDoc) {
     if (!g_d2dContext) return E_FAIL;
 
     Microsoft::WRL::ComPtr<IStream> svgStream;
@@ -120,65 +101,104 @@ HRESULT LoadSvgFile(const wchar_t* filename, Microsoft::WRL::ComPtr<ID2D1SvgDocu
     return hr;
 }
 
-void render(HWND hwnd) {
-    // Checking direct 2D context
-    if (!g_d2dContext) return;
+HRESULT loadPngFile(const wchar_t* filename, Microsoft::WRL::ComPtr<ID2D1Bitmap1>& outBitmap) {
+    if (!g_wicFactory || !g_d2dContext) return E_FAIL;
 
-    // Geting current window dimensions
-    float windowWidth = getWindowWidth(hwnd);
-    float windowHeight = getWindowHeight(hwnd);
+    Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr = g_wicFactory->CreateDecoderFromFilename(
+        filename,
+        nullptr,
+        GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,
+        &decoder
+    );
+    if (FAILED(hr)) return hr;
 
-    // Start drawing and clear drawing frame
-    g_d2dContext->BeginDraw();
-    g_d2dContext->Clear(D2D1::ColorF(0.08f, 0.09f, 0.11f, 1.0f));
+    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr)) return hr;
 
-    // Svgs
-    ID2D1SvgDocument* batterySvg = g_isPluggedIn ? g_svgBatteryPlugged.Get() : g_svgBatteryUnplugged.Get();
+    // Convert to Premultiplied BGRA so Direct2D blends alpha cleanly
+    Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+    hr = g_wicFactory->CreateFormatConverter(&converter);
+    if (FAILED(hr)) return hr;
 
-    if (batterySvg) {
-        SvgLayout svg = calcSvgLayout(50.0f, windowWidth, 10.0f, 0.0f, L"TOP_LEFT");
-        transformSpaceForSvg(batterySvg, svg);
+    hr = converter->Initialize(
+        frame.Get(),
+        GUID_WICPixelFormat32bppPBGRA,
+        WICBitmapDitherTypeNone,
+        nullptr,
+        0.0f,
+        WICBitmapPaletteTypeMedianCut
+    );
+    if (FAILED(hr)) return hr;
 
-        // Battery text bpunds
-        float textX = svg.x + svg.desiredSize + 5.0f;
-        float textY = svg.y + 8.0f; // Vertically centered
-        
-        // D2D1_RECT_F textRect = D2D1::RectF(textX, textY, textX + 100.0f, textY + 24.0f);
+    D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+    );
 
-        // Createing brush for the text
-        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> textBrush;
-        g_d2dContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &textBrush);
+    hr = g_d2dContext->CreateBitmapFromWicBitmap(converter.Get(), &props, &outBitmap);
+    if (FAILED(hr)) return hr;
 
-        std::wstring batteryText = std::to_wstring(g_batteryPercent) + L"%";
+    return S_OK;
+}
 
-        // Creating a layout
-        Microsoft::WRL::ComPtr<IDWriteTextLayout> textLayout;
-        g_dWriteFactory->CreateTextLayout(
-            batteryText.c_str(),
-            static_cast<UINT32>(batteryText.length()),
-            g_textFormat.Get(),
-            200.0f, // Max layout width
-            50.0f,  // Max layout height
-            &textLayout
-        );
+HRESULT configureText(
+    Text& component,
+    const std::wstring& string,
+    float fontSize,
+    D2D1_POINT_2F origin,
+    float maxWidth,
+    float maxHeight,
+    std::wstring color
+) {
+    if (!g_d2dContext || !g_dWriteFactory || !g_textFormat) return E_FAIL;
 
-        // Targeting the exact range and overriding the font size dynamically
-        DWRITE_TEXT_RANGE range = { 0, static_cast<UINT32>(batteryText.length()) };
-        textLayout->SetFontSize(24.0f, range); // <--- Changes font size for this layout instantly
+    component.text = string;
+    component.fontSize = fontSize;
+    component.origin = origin;
 
-        // 3. Drawing the layout
-        g_d2dContext->DrawTextLayout(
-            D2D1::Point2F(textX, textY),
-            textLayout.Get(),
-            textBrush.Get()
-        );
+    if(color == L"white") {
+        component.brush = g_whiteBrush;
     }
 
-    // Terminal
-    renderTerminal(hwnd, windowWidth, windowHeight);   
+    HRESULT hr = g_dWriteFactory->CreateTextLayout(
+        component.text.c_str(),
+        static_cast<UINT32>(component.text.length()),
+        g_textFormat.Get(),
+        maxWidth,
+        maxHeight,
+        &component.layout
+    );
+    if (FAILED(hr)) return hr;
 
-    // TO BE REVIEWED
-    // Ending drawing
-    g_d2dContext->EndDraw();
-    g_swapChain->Present(1, 0);
+    if (!component.text.empty()) {
+        DWRITE_TEXT_RANGE fullRange = { 0, static_cast<UINT32>(component.text.length()) };
+        hr = component.layout->SetFontSize(component.fontSize, fullRange);
+        if (FAILED(hr)) return hr;
+    }
+
+    return S_OK;
+}
+
+void renderPng() {
+    if (g_logo.png) {
+        g_d2dContext->DrawBitmap(
+            g_logo.png.Get(),
+            &g_logo.rect,
+            g_logo.opacity, // opacity
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR
+        );
+    }
+}
+
+void renderText(Text& component) {
+    if(component.layout) {
+        g_d2dContext->DrawTextLayout(
+            component.origin,
+            component.layout.Get(),
+            component.brush.Get()
+        );
+    }
 }

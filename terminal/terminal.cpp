@@ -73,7 +73,10 @@ void initializeTerminal(HWND hwnd) {
     }
 }
 
-void renderTerminal(HWND hwnd, float windowWidth, float windowHeight) {
+void renderTerminal(HWND hwnd) {
+    float windowWidth = getWindowWidth(hwnd);
+    float windowHeight = getWindowHeight(hwnd);
+
     // Positioning terminal box below the top icons
     g_terminal.bounds = D2D1::RectF(40.0f, 80.0f, windowWidth - 40.0f, windowHeight - 40.0f);
 
